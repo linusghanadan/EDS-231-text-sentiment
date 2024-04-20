@@ -26,10 +26,6 @@ knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 
 -   Use the full text of the articles for the analysis. Inspect the data (in particular the full-text article data).
 
-```{=html}
-<!-- -->
-```
-
 -   If necessary, clean any artifacts of the data collection process (hint: this type of thing should be removed: "Apr 04, 2022( Biofuels Digest: <http://www.biofuelsdigest.com/Delivered> by Newstex") and any other urls)
 
 -   Remove any clear duplicate articles. LNT has a method for this, but it doesn't seem to work, so you probably need to do it manually.
@@ -45,82 +41,77 @@ library(tidytext)
 library(tidyr)
 library(ggplot2)
 library(textdata)
-
+library(lubridate)
 ```
 
 ```{r}
-library(textdata)
-```
-
-
-```{r}
-# Set the working directory to where the .docx files are stored
+# set the working directory
 setwd(here("nexis"))
 
-# List all .docx files from the directory
+# list all .docx files from directory
 plastic_files <- list.files(pattern = ".docx", path = getwd(),
                             full.names = TRUE, recursive = TRUE, ignore.case = TRUE)
 ```
 
 ```{r}
-# Read the document files using LexisNexisTools
+# read files
 dat <- lnt_read(plastic_files)
 
-# Extract metadata, article text, and paragraph text
+# extract metadata, article text, and paragraph text
 meta_df <- dat@meta
 articles_df <- dat@articles
 paragraphs_df <- dat@paragraphs
 
-# Create a tidy data frame for analysis
+# create tidy data frame
 dat2 <- tibble(Date=meta_df$Date, Headline = meta_df$Headline, id = articles_df$ID, text = articles_df$Article)
 
 ```
 
 ```{r}
-# Load the bing sentiment lexicon
+# load bing sentiment lexicon
 bing_sent <- get_sentiments("bing")
 ```
-
-
-
 
 ### Explore your data and conduct the following analyses:
 
 1.  Calculate mean sentiment across all your articles
 
 ```{r}
+# prepare text data
 text_words <- dat2 %>% 
-  unnest_tokens(output = word, input = text, token = 'words') %>%
-  anti_join(stop_words, by = 'word') %>%
-  inner_join(bing_sent, by = 'word') %>%
+  unnest_tokens(output = word, input = text, token = 'words') %>% # tokenize
+  anti_join(stop_words, by = 'word') %>% # remove stop words
+  inner_join(bing_sent, by = 'word') %>% # join with bind sentiment lexicon
   mutate(sent_num = case_when(sentiment == 'negative' ~ -1,
                               sentiment == 'positive' ~ 1))
 
 ```
 
 ```{r}
+# calculate sentiment scores for each article
 sent_article <- text_words %>%
   group_by(Headline) %>%
   count(id, sentiment) %>%
   pivot_wider(names_from = sentiment, values_from = n) %>%
   mutate(polarity = positive - negative)
 
-# Mean polarity
+# calculate mean polarity across all articles
 mean(sent_article$polarity, na.rm = TRUE)
 
 ```
 
 
-
 2.  Sentiment by article plot. The one provided in class needs significant improvement.
 
 ```{r}
+# create sentiment by article plot
 ggplot(sent_article, aes(x = id)) +
-  theme_classic() +
-  geom_col(aes(y = negative), stat = 'identity', fill = 'red4') +
-  geom_col(aes(y = positive), stat = 'identity', fill = 'slateblue3') +
-  theme(axis.title = element_blank()) +
-  labs(title = 'Sentiment Analysis: Plastic', y = 'Sentiment Score')
+  geom_col(aes(y = negative, fill = "Negative Sentiment"), stat = 'identity') +
+  geom_col(aes(y = positive, fill = "Positive Sentiment"), stat = 'identity') +
+  scale_fill_manual(values = c("Negative Sentiment" = "darkred", "Positive Sentiment" = "cornflowerblue")) +
+  labs(title = 'Sentiment Analysis: Plastic', y = 'Sentiment Score', x = "Article ID", fill = "") +
+  theme_minimal() +
+  theme(legend.position = "top")
 
 ```
 
@@ -128,10 +119,12 @@ ggplot(sent_article, aes(x = id)) +
 3.  Most common nrc emotion words and plot by emotion
 
 ```{r}
+# retrieve NRC emotion lexicon
 nrc_sent <- get_sentiments('nrc')
 ```
 
 ```{r}
+# count occurrences of each word tagged with an NRC emotion (except stop words)
 nrc_word_counts <- text_words %>%
   anti_join(stop_words, by = 'word') %>%
   inner_join(nrc_sent) %>%
@@ -139,6 +132,7 @@ nrc_word_counts <- text_words %>%
 ```
 
 ```{r}
+# visualize top 5 most frequent words for each emotion
 nrc_word_counts %>%
   group_by(sentiment) %>%
   slice_max(n, n = 5) %>%
@@ -151,28 +145,27 @@ nrc_word_counts %>%
 
 ```
 
-
-
 4.  Look at the nrc contribution to emotion by word plots. Identify and reclassify or remove at least one term that gives misleading results in your context.
 
 ```{r}
-# Remove or reclassify 'lead' in sentiment analysis
+# remove 'lead' from sentiment analysis
 adjusted_text_words <- text_words %>%
   filter(word != "lead")
 
-# Continue with sentiment analysis with the adjusted text data
+# calculate sentiment scores for each article
 sent_article <- adjusted_text_words %>%
   group_by(Headline) %>%
   count(id, sentiment) %>%
   pivot_wider(names_from = sentiment, values_from = n) %>%
   mutate(polarity = positive - negative)
 
-# Mean polarity recalculated
+# calculate mean polarity
 mean(sent_article$polarity, na.rm = TRUE)
 
 ```
 
 ```{r}
+# count occurrences of each word tagged with an NRC emotion (except stop words)
 nrc_word_counts <- adjusted_text_words %>%
   anti_join(stop_words, by = 'word') %>%
   inner_join(nrc_sent) %>%
@@ -180,6 +173,7 @@ nrc_word_counts <- adjusted_text_words %>%
 ```
 
 ```{r}
+# visualize top 5 most frequent words for each emotion
 nrc_word_counts %>%
   group_by(sentiment) %>%
   slice_max(n, n = 5) %>%
@@ -199,4 +193,63 @@ nrc_word_counts %>%
 5.  Plot the amount of nrc emotion words as a percentage of all the emotion words used each day (aggregate text from articles published on the same day). How does the distribution of emotion words change over time? Can you think of any reason this would be the case?
 
 
+```{r}
+
+# ensure 'Date' is in appropriate format
+dat2$Date <- as.Date(dat2$Date, format="%Y-%m-%d")
+
+# reassemble articles from words
+articles_reconstructed <- dat2 %>%
+  group_by(Date, id) %>%
+  summarise(article_text = paste(word, collapse=" ")) %>%
+  ungroup()
+
+
+# aggregate all article text by day
+daily_text <- articles_reconstructed %>%
+  group_by(Date) %>%
+  summarise(daily_text = paste(article_text, collapse=" ")) %>%
+  ungroup()
+
+```
+
+
+
+
+
+```{r}
+
+# tokenize and join with NRC sentiments
+daily_words <- daily_text %>%
+  unnest_tokens(word, daily_text) %>%
+  inner_join(nrc_sent, by = 'word')
+
+# count emotion words by day
+daily_emotions_count <- daily_words %>%
+  count(Date, sentiment) %>%
+  spread(sentiment, n, fill = 0) %>%
+  mutate(total_emotion_words = rowSums(across(starts_with("anger"):starts_with("trust"))))
+
+# calculate percentage of each emotion word relative to total emotion words each day
+emotion_percentages <- daily_emotions_count %>%
+  mutate(across(starts_with("anger"):starts_with("trust"), ~ . / total_emotion_words * 100)) %>%
+  select(Date, anger:trust)
+
+# melt data for plotting
+emotion_percentages_long <- pivot_longer(emotion_percentages, cols = -Date, names_to = "emotion", values_to = "percentage")
+
+# plot
+ggplot(emotion_percentages_long, aes(x = Date, y = percentage, color = emotion)) +
+  geom_line() +
+  scale_color_brewer(palette = "Set3") +
+  labs(title = "Emotion words over time in articles about plastic",
+       y = "Percent of article words",
+       color = "Emotion") +
+  theme_minimal() +
+  scale_x_date(date_breaks = "6 month", date_labels = "%b %Y") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+The only noticeable trend over time, from 2020 through the current date, is a decrease in the emotion of trust. For articles about plastic, this could be because there is increasing distrust in the capability of companies and individuals to effectively reduce plastic pollution given the for-profit incentives of companies selling things with plastic packaging. Perhaps in 2020 there was more trust in the capacity for reform when President Biden first took office.
 
