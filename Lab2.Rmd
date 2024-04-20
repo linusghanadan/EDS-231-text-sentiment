@@ -198,17 +198,10 @@ nrc_word_counts %>%
 # ensure 'Date' is in appropriate format
 dat2$Date <- as.Date(dat2$Date, format="%Y-%m-%d")
 
-# reassemble articles from words
-articles_reconstructed <- dat2 %>%
-  group_by(Date, id) %>%
-  summarise(article_text = paste(word, collapse=" ")) %>%
-  ungroup()
-
-
 # aggregate all article text by day
-daily_text <- articles_reconstructed %>%
+daily_text <- dat2 %>%
   group_by(Date) %>%
-  summarise(daily_text = paste(article_text, collapse=" ")) %>%
+  summarise(daily_text = paste(text, collapse=" ")) %>%
   ungroup()
 
 ```
@@ -242,11 +235,11 @@ emotion_percentages_long <- pivot_longer(emotion_percentages, cols = -Date, name
 ggplot(emotion_percentages_long, aes(x = Date, y = percentage, color = emotion)) +
   geom_line() +
   scale_color_brewer(palette = "Set3") +
+  scale_x_date(date_breaks = "6 month", date_labels = "%b %Y") +
   labs(title = "Emotion words over time in articles about plastic",
        y = "Percent of article words",
        color = "Emotion") +
   theme_minimal() +
-  scale_x_date(date_breaks = "6 month", date_labels = "%b %Y") +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
 ```
