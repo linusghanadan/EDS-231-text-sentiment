@@ -152,7 +152,48 @@ nrc_word_counts %>%
 ```
 
 
+
 4.  Look at the nrc contribution to emotion by word plots. Identify and reclassify or remove at least one term that gives misleading results in your context.
+
+```{r}
+# Remove or reclassify 'lead' in sentiment analysis
+adjusted_text_words <- text_words %>%
+  filter(word != "lead")
+
+# Continue with sentiment analysis with the adjusted text data
+sent_article <- adjusted_text_words %>%
+  group_by(Headline) %>%
+  count(id, sentiment) %>%
+  pivot_wider(names_from = sentiment, values_from = n) %>%
+  mutate(polarity = positive - negative)
+
+# Mean polarity recalculated
+mean(sent_article$polarity, na.rm = TRUE)
+
+```
+
+```{r}
+nrc_word_counts <- adjusted_text_words %>%
+  anti_join(stop_words, by = 'word') %>%
+  inner_join(nrc_sent) %>%
+  count(word, sentiment, sort = TRUE)
+```
+
+```{r}
+nrc_word_counts %>%
+  group_by(sentiment) %>%
+  slice_max(n, n = 5) %>%
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales = "free_y") +
+  labs(x = 'Contribution to Sentiment', y = NULL)
+
+```
+
+
+
 
 
 5.  Plot the amount of nrc emotion words as a percentage of all the emotion words used each day (aggregate text from articles published on the same day). How does the distribution of emotion words change over time? Can you think of any reason this would be the case?
