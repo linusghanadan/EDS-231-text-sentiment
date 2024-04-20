@@ -1,9 +1,14 @@
 ---
 title: "Lab 2: Sentiment Analysis I"
-author: "Your Name"
+author: "Linus Ghanadan"
 date: "2024-04-10"
 output: html_document
 ---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
 
 ## Assignment (Due 4/16 by 11:59 PM)
 
@@ -24,14 +29,133 @@ output: html_document
 ```{=html}
 <!-- -->
 ```
+
 -   If necessary, clean any artifacts of the data collection process (hint: this type of thing should be removed: "Apr 04, 2022( Biofuels Digest: <http://www.biofuelsdigest.com/Delivered> by Newstex") and any other urls)
 
 -   Remove any clear duplicate articles. LNT has a method for this, but it doesn't seem to work, so you probably need to do it manually.
 
+
+```{r}
+library(LexisNexisTools)
+library(dplyr)
+library(readr)
+library(stringr)
+library(here)
+library(tidytext)
+library(tidyr)
+library(ggplot2)
+library(textdata)
+
+```
+
+```{r}
+library(textdata)
+```
+
+
+```{r}
+# Set the working directory to where the .docx files are stored
+setwd(here("nexis"))
+
+# List all .docx files from the directory
+plastic_files <- list.files(pattern = ".docx", path = getwd(),
+                            full.names = TRUE, recursive = TRUE, ignore.case = TRUE)
+```
+
+```{r}
+# Read the document files using LexisNexisTools
+dat <- lnt_read(plastic_files)
+
+# Extract metadata, article text, and paragraph text
+meta_df <- dat@meta
+articles_df <- dat@articles
+paragraphs_df <- dat@paragraphs
+
+# Create a tidy data frame for analysis
+dat2 <- tibble(Date=meta_df$Date, Headline = meta_df$Headline, id = articles_df$ID, text = articles_df$Article)
+
+```
+
+```{r}
+# Load the bing sentiment lexicon
+bing_sent <- get_sentiments("bing")
+```
+
+
+
+
 ### Explore your data and conduct the following analyses:
 
 1.  Calculate mean sentiment across all your articles
+
+```{r}
+text_words <- dat2 %>% 
+  unnest_tokens(output = word, input = text, token = 'words') %>%
+  anti_join(stop_words, by = 'word') %>%
+  inner_join(bing_sent, by = 'word') %>%
+  mutate(sent_num = case_when(sentiment == 'negative' ~ -1,
+                              sentiment == 'positive' ~ 1))
+
+```
+
+```{r}
+sent_article <- text_words %>%
+  group_by(Headline) %>%
+  count(id, sentiment) %>%
+  pivot_wider(names_from = sentiment, values_from = n) %>%
+  mutate(polarity = positive - negative)
+
+# Mean polarity
+mean(sent_article$polarity, na.rm = TRUE)
+
+```
+
+
+
 2.  Sentiment by article plot. The one provided in class needs significant improvement.
+
+```{r}
+ggplot(sent_article, aes(x = id)) +
+  theme_classic() +
+  geom_col(aes(y = negative), stat = 'identity', fill = 'red4') +
+  geom_col(aes(y = positive), stat = 'identity', fill = 'slateblue3') +
+  theme(axis.title = element_blank()) +
+  labs(title = 'Sentiment Analysis: Plastic', y = 'Sentiment Score')
+
+```
+
+
 3.  Most common nrc emotion words and plot by emotion
+
+```{r}
+nrc_sent <- get_sentiments('nrc')
+```
+
+```{r}
+nrc_word_counts <- text_words %>%
+  anti_join(stop_words, by = 'word') %>%
+  inner_join(nrc_sent) %>%
+  count(word, sentiment, sort = TRUE)
+```
+
+```{r}
+nrc_word_counts %>%
+  group_by(sentiment) %>%
+  slice_max(n, n = 5) %>%
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales = "free_y") +
+  labs(x = 'Contribution to Sentiment', y = NULL)
+
+```
+
+
 4.  Look at the nrc contribution to emotion by word plots. Identify and reclassify or remove at least one term that gives misleading results in your context.
+
+
 5.  Plot the amount of nrc emotion words as a percentage of all the emotion words used each day (aggregate text from articles published on the same day). How does the distribution of emotion words change over time? Can you think of any reason this would be the case?
+
+
+
