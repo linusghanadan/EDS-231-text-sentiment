@@ -67,6 +67,11 @@ dat2 <- tibble(Date=meta_df$Date, Headline = meta_df$Headline, id = articles_df$
 
 ```
 
+# clean the data
+dat2 <- dat2 %>%
+  dplyr::filter(!is.na(Headline)) %>%
+  distinct(Headline, .keep_all = TRUE)
+
 ```{r}
 # load bing sentiment lexicon
 bing_sent <- get_sentiments("bing")
