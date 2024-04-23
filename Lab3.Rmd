@@ -1,6 +1,6 @@
 ---
 title: "Lab3"
-author: "Your Name"
+author: "Linus Ghanadan"
 date: "2024-04-17"
 output: html_document
 ---
@@ -20,6 +20,8 @@ library(ldatuning)
 library(tidyverse)
 library(tidytext)
 library(reshape2)
+library(LDAvis) # visualization
+library(tsne) # matrix decomposition
 ```
 
 1.  Create a corpus from your articles.
@@ -93,7 +95,7 @@ results <- FindTopicsNumber(dfm,
 FindTopicsNumber_plot(results)
 ```
 
-While these results aren't ideal to work with, I will select k = 5, since it has a high value for the Deveaud2014. However, CaoJuan2009 value we want to minimize is pretty high, but I don't want to split into too many groups just so the results are easier to interpret. There is a bit of a spike in the Deveaud2014 metric at k = 5, so I feel like that is the best one to move forward with.
+In trying to strike a balance between a high value for Deveaud2014 and a low value for CaoJuan2009, I am selecting k=5 because has a very high value for Deveaud2014 that is above 0.90 and a relatively low value for CaoJuan2009 of about 0.30. It would be better if I could have had a lower value for CaoJuan2009, but given the distribution in Deveaud2014 and CaoJuan2009 across different numbers of topics, 5 seems like the best choice in this situation, especially given that I do not want the burden of interpreting a large number of different topics.
 
 ```{r}
 # set k value based 
@@ -166,8 +168,6 @@ ggplot(data = viz_df, aes(variable, value, fill = document),
 ```
 
 ```{r}
-#library(LDAvis) #visualization
-#library("tsne") #matrix decomposition
 
 svd_tsne <- function(x) tsne(svd(x)$u)
 
@@ -186,4 +186,8 @@ serVis(json)
 
 5.  Take a stab at interpreting the resulting topics. What are the key themes discussed in the articles in your data base?
 
+Some key themes discussed in the articles that I have analyzed are the use of plastic in bags and packaging, specifically single-use packaging. These specific instances of where plastic is used, alongside words such as "ban", "tax", and "law", suggest that these sorts of items (plastic bags and plastic packaging) are subjected to regulations in certain areas. In addition, the high frequency of the words "UK", "Canada", and "CEPA" (Center for European Policy Analysis) suggests that the U areas of the world are the ones where these sort of regulatory dynamics are either being proposed or have been implemented.
 
+Interestingly, in cluster 5, where nearly all mentions of "UK" exist, is also the same cluster where nearly all mentions of "tax" exist, indicating that the UK stands out as an area that is either proposing or implementing a tax regarding plastic production or consumption.
+
+Furthermore, in cluster 1, where nearly all mentions of "Canada" exist, is also the same cluster where nearly all mentions of "proposed", "plan", and "paper" exist, indicating that Canada might be in the process of proposing regulations that will cover both plastic and paper materials.
