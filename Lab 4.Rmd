@@ -1,22 +1,312 @@
 ---
 title: "Lab 4"
-author: "Your Name"
+author: "Linus Ghanadan"
 date: "2024-04-24"
 output: html_document
 ---
 
 Lab 4 Assignment: Due May 7 at 11:59pm
 
+```{r}
+# load packages
+library(tidytext)
+library(tidyverse)
+library(tidymodels)
+library(textrecipes)
+```
+
+```{r data}
+# read in data
+urlfile ="https://raw.githubusercontent.com/MaRo406/EDS-231-text-sentiment/main/data/climbing_reports_model_dat.csv"
+incidents_df<-readr::read_csv(url(urlfile))
+```
+
+
+```{r}
+set.seed(1234)
+
+# clean data
+incidents2class <- incidents_df %>%
+  mutate(fatal = factor(if_else(
+                        is.na(Deadly),
+                        "non-fatal", "fatal")))
+
+# split data into training and testing splits
+incidents_split <- initial_split(incidents2class, strata = fatal)
+
+incidents_train <- training(incidents_split)
+incidents_test <- testing(incidents_split)
+
+# specify the predictor and outcome variables and the data
+incidents_rec <- recipe(fatal ~ Text, data = incidents_train)
+
+# tokenize to word level, filter to the most common words, and calculate tf-idf
+recipe <- incidents_rec %>%
+  step_tokenize(Text) %>%
+  step_tokenfilter(Text, max_tokens = 5000) %>%
+  step_tfidf(Text)
+
+```
+
+```{r workflow}
+# create workflow
+incidents_wf <- workflow() %>%
+  add_recipe(recipe)
+```
+
+
 1. Select another classification algorithm.  
 
-2. Conduct an initial out-of-the-box model fit on the training data and prediction on the test data.  Assess the performance of this initial model. 
+```{r nb-spec}
+# select xgboost engine for classification
+xg_spec <- boost_tree(mode = "classification",
+                      engine = "xgboost")
+```
+
+2. Conduct an initial out-of-the-box model fit on the training data and prediction on the test data.  Assess the performance of this initial model.
+
+```{r}
+# fit to training data
+xg_fit <- incidents_wf %>%
+  add_model(xgboost_spec) %>%
+  fit(data = incidents_train)
+```
+
+```{r nb-workflow}
+# create workflow
+  xg_wf <- workflow() %>%
+    add_recipe(recipe) %>%
+    add_model(xg_spec)
+
+```
+
+
+```{r performance}
+# predict testing data
+xg_predict1 <- predict(xg_fit, incidents_test) %>%
+  bind_cols(incidents_test) # bind to testing df
+
+# get probabilities for predictions made on testing data (to calculate ROC AUC)
+xg_predict1 <- predict(xg_fit, incidents_test, type = "prob") %>%
+  bind_cols(xg_predict1) %>%  # bind to df that was just created
+  mutate(name = as.factor(fatal))
+
+# store confusion matrix for predictions made on testing data
+xg_conf_matrix1 <- xg_predict1 %>% 
+  conf_mat(truth = name, estimate = .pred_class) %>% 
+  autoplot(type = "heatmap") +
+  ggtitle("xg1") +
+  theme_bw() +
+  theme(legend.position = "none")
+
+# store error metrics of testing data predictions
+xg_accuracy1 <- accuracy(xg_predict1, truth = fatal, estimate = .pred_class)
+xg_roc_auc1 <- roc_auc(xg_predict1, truth = fatal, .pred_fatal)
+xg_sensitivity1 <- sensitivity(xg_predict1, truth = fatal, estimate = .pred_class)
+xg_specificity1 <- specificity(xg_predict1, truth = fatal, estimate = .pred_class)
+```
+
+```{r}
+xg_accuracy1
+xg_roc_auc1
+xg_sensitivity1
+xg_specificity1
+xg_conf_matrix1
+```
+
+ASSESS PERFORMANCE
 
 3. Select the relevant hyperparameters for your algorithm and tune your model.
 
+```{r cv_folds}
+set.seed(1234)
+
+# create CV folds
+incidents_folds <- vfold_cv(incidents_train)
+```
+
+```{r}
+set.seed(1234)
+
+# select classification algorithm
+xg_lr_spec <- boost_tree(mode = "classification",
+                      engine = "xgboost",
+                      learn_rate = tune())
+
+# create tuning grid for learning rate
+tuning_grid <- expand.grid(learn_rate = seq(0.01, 0.3, length.out = 10))
+
+# create workflow for tuning learning rate
+xg_lr_wf <- workflow() %>%
+  add_model(xg_lr_spec) %>%
+  add_recipe(recipe)
+
+# tune learning rate using CV
+xg_lr_tune <- tune_grid(xg_lr_wf,
+                         resamples = incidents_folds,
+                         grid = tuning_grid,
+                         metrics = metric_set(accuracy))
+
+# store optimized learning rate
+best_lr <- select_best(xg_lr_tune)
+```
+
+```{r}
+set.seed(1234)
+
+# specify model for tuning tree parameters
+xg_tree_spec <- boost_tree(learn_rate = best_lr$learn_rate, # use optimized learning rate from previous step
+                            trees = 3000, # set number of trees to 3000
+                            tree_depth = tune(), # tune maximum tree depth
+                            min_n = tune(), # tune minimum n for a terminal node (minimum number of data points in a node that is required for the node to be split further)
+                            loss_reduction = tune(), # tune loss reduction (minimum loss required for further splits)
+                            mode = "classification",
+                            engine = "xgboost")
+
+# create tuning grid for tree parameters
+tuning_grid <- grid_latin_hypercube(tree_depth(),
+                                    min_n(),
+                                    loss_reduction(),
+                                    size = 10)
+
+# create workflow for tuning tree parameters
+xg_tree_wf <- workflow() %>%
+  add_model(xg_tree_spec) %>%
+  add_recipe(recipe)
+
+# tune tree parameters using CV
+xg_tree_tune <- tune_grid(xg_tree_wf,
+                           resamples = incidents_folds,
+                           grid = tuning_grid,
+                           metrics = metric_set(accuracy))
+
+# store optimized tree parameters
+best_tree <- select_best(xg_tree_tune)
+```
+
+```{r}
+set.seed(1234)
+
+# specify model for tuning stochasticity parameters
+xg_stoch_spec <- boost_tree(learn_rate = best_lr$learn_rate, # use optimized learning rate
+                                  trees = 3000, # set number of trees to 3000
+                                  tree_depth = best_tree$tree_depth, # use optimized maximum tree depth
+                                  min_n = best_tree$min_n, # use optimized minimum n for a terminal node (minimum number of data points in a node that is required for the node to be split further)
+                                  loss_reduction = best_tree$loss_reduction, # use optimized loss reduction (minimum loss required for further splits)
+                                  mtry = tune(), # tune mtry (number of unique feature variables in each subsample)
+                                  sample_size = tune(), # tune sample size (amount of randomly selected data exposed to the fitting routine when conducting stochastic gradient descent at each split)
+                                  mode = "classification",
+                                  engine = "xgboost")
+
+# specify mtry range based on the number of predictors
+mtry_final <- finalize(mtry(), incidents_train)
+
+# create tuning grid for stochasticity parameters
+tuning_grid <- grid_latin_hypercube(mtry_final,
+                                    sample_size = sample_prop(),
+                                    size = 10)
+
+# create workflow for tuning stochasticity parameters
+xg_stoch_wf <- workflow() %>%
+  add_model(xg_stoch_spec) %>%
+  add_recipe(recipe)
+
+# tune stochasticity parameters using CV
+xg_stoch_tune <- tune_grid(xg_stoch_wf,
+                                 resamples = incidents_folds,
+                                 grid = tuning_grid,
+                                 metrics = metric_set(accuracy))
+
+# store optimized stochasticity parameters
+best_stoch <- select_best(xg_tune)
+```
+
+
+
 4. Conduct a model fit using your newly tuned model specification.  How does it compare to your out-of-the-box model?
+
+```{r}
+# specify final model with optimized parameters
+xg_final <- finalize_model(xg_stoch_spec, best_stoch)
+
+# predict testing data
+xg_predict2 <- predict(xg_fit, incidents_test) %>%
+  bind_cols(incidents_test) # bind to testing df
+
+# get probabilities for predictions made on testing data (to calculate ROC AUC)
+xg_predict2 <- predict(xg_fit, incidents_test, type = "prob") %>%
+  bind_cols(xg_predict1) %>%  # bind to df that was just created
+  mutate(name = as.factor(fatal))
+
+# store confusion matrix for predictions made on testing data
+xg_conf_matrix2 <- xg_predict2 %>% 
+  conf_mat(truth = name, estimate = .pred_class) %>% 
+  autoplot(type = "heatmap") +
+  ggtitle("xg2") +
+  theme_bw() +
+  theme(legend.position = "none")
+
+# store error metrics of testing data predictions
+xg_accuracy2 <- accuracy(xg_predict2, truth = fatal, estimate = .pred_class)
+xg_roc_auc2 <- roc_auc(xg_predict2, truth = fatal, .pred_fatal)
+xg_sensitivity2 <- sensitivity(xg_predict2, truth = fatal, estimate = .pred_class)
+xg_specificity2 <- specificity(xg_predict2, truth = fatal, estimate = .pred_class)
+```
+
+```{r}
+# display confusion matrices of both models
+xg_conf_matrix1 + xg_conf_matrix2
+```
+
+
+```{r}
+# create tibble of accuracy and ROC AUC for all four models
+metrics_tibble <- tibble(
+  Method = factor(rep(c("xg1", "xg2"), times = 2),
+                  levels = c("xg1", "xg2")),
+  Metric = rep(c("Accuracy", "Area under Receiver Operating Characteristic (ROC) curve"), each = 4),
+  Value = c(xg_accuracy1$.estimate[1], xg_accuracy2$.estimate[1],
+            xg_roc_auc1$.estimate[1], xg_roc_auc2$.estimate[1]))
+
+# create bar plot comparing accuracy and ROC AUC across all four models
+ggplot(metrics_tibble, aes(x = Method, y = Value, fill = Metric)) + 
+  geom_bar(stat = "identity", position = position_dodge(width = 0.9)) +
+  geom_text(aes(label = sprintf("%.2f", Value),
+                y = Value + 0.02),
+            position = position_dodge(width = 0.9),
+            vjust = 0,
+            size = 4) +
+  theme_minimal() +
+  labs(y = "Metric Value", x = "Model", title = "Model Comparison") +
+  scale_fill_brewer(palette = "BuPu") +
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.title.x = element_blank(),
+        legend.position = "top",
+        legend.title = element_blank())
+```
+
+My second xgboost model ("xg2") performed significantly better than the out-of-box version ("xg1") for predicting the testing data, as tuning the learning rate, tree parameters, and stochasiticity parameters allows for the model to more effectively understand patterns in the training data.
 
 5.
   a. Use variable importance to determine the terms most highly associated with non-fatal reports?  What about terms associated with fatal reports? OR
   b. If you aren't able to get at variable importance with your selected algorithm, instead tell me how you might in theory be able to do it. Or how you might determine the important distinguishing words in some other way. 
+  
+```{r}
+# compare importance of different predictor variables in best performing model
+vip(xg_fit, method = "model", num_features = 13) +
+  ggtitle("Importance of features in SGB model") +
+  labs(caption = "Note: Importance of time_sig is <0.01") +
+  ylim(0.00, 0.20) +
+  geom_text(aes(label = sprintf("%.2f", Importance), # label values
+                x = Variable,
+                y = Importance + 0.001),
+            hjust = 0,
+            color = "black",
+            size = 3.5) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.text.y = element_text(color = "black", size = 12))
+```
+
 
 6. Predict fatality of the reports in the test set.  Compare this prediction performance to that of the Naive Bayes and Lasso models.  Why do you think your model performed as it did, relative to the other two?
