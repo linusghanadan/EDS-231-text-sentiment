@@ -68,7 +68,7 @@ xg_spec <- boost_tree(mode = "classification",
 ```{r}
 # fit to training data
 xg_fit <- incidents_wf %>%
-  add_model(xgboost_spec) %>%
+  add_model(xg_spec) %>%
   fit(data = incidents_train)
 ```
 
@@ -114,7 +114,7 @@ xg_specificity1
 xg_conf_matrix1
 ```
 
-ASSESS PERFORMANCE
+The out-of-box model accurately predicts whether an incident was fatal about 94% of the time. Notably, the true positive rate (i.e., accuracy when the accident was fatal) is only 77%. In comparison, the true negative rate (i.e., accuracy when the accident was non-fatal) is 98%, indicating the model has significantly more difficulty predicting fatal accidents than non-fatal accidents.
 
 3. Select the relevant hyperparameters for your algorithm and tune your model.
 
@@ -122,7 +122,7 @@ ASSESS PERFORMANCE
 set.seed(1234)
 
 # create CV folds
-incidents_folds <- vfold_cv(incidents_train)
+incidents_folds <- vfold_cv(incidents_train, v = 5)
 ```
 
 ```{r}
@@ -134,7 +134,7 @@ xg_lr_spec <- boost_tree(mode = "classification",
                       learn_rate = tune())
 
 # create tuning grid for learning rate
-tuning_grid <- expand.grid(learn_rate = seq(0.01, 0.3, length.out = 10))
+tuning_grid <- expand.grid(learn_rate = seq(0.01, 0.3, length.out = 5))
 
 # create workflow for tuning learning rate
 xg_lr_wf <- workflow() %>%
@@ -156,7 +156,7 @@ set.seed(1234)
 
 # specify model for tuning tree parameters
 xg_tree_spec <- boost_tree(learn_rate = best_lr$learn_rate, # use optimized learning rate from previous step
-                            trees = 3000, # set number of trees to 3000
+                            trees = 100, # set number of trees to 100
                             tree_depth = tune(), # tune maximum tree depth
                             min_n = tune(), # tune minimum n for a terminal node (minimum number of data points in a node that is required for the node to be split further)
                             loss_reduction = tune(), # tune loss reduction (minimum loss required for further splits)
@@ -167,7 +167,7 @@ xg_tree_spec <- boost_tree(learn_rate = best_lr$learn_rate, # use optimized lear
 tuning_grid <- grid_latin_hypercube(tree_depth(),
                                     min_n(),
                                     loss_reduction(),
-                                    size = 10)
+                                    size = 5)
 
 # create workflow for tuning tree parameters
 xg_tree_wf <- workflow() %>%
@@ -189,7 +189,7 @@ set.seed(1234)
 
 # specify model for tuning stochasticity parameters
 xg_stoch_spec <- boost_tree(learn_rate = best_lr$learn_rate, # use optimized learning rate
-                                  trees = 3000, # set number of trees to 3000
+                                  trees = 100, # set number of trees to 100
                                   tree_depth = best_tree$tree_depth, # use optimized maximum tree depth
                                   min_n = best_tree$min_n, # use optimized minimum n for a terminal node (minimum number of data points in a node that is required for the node to be split further)
                                   loss_reduction = best_tree$loss_reduction, # use optimized loss reduction (minimum loss required for further splits)
@@ -204,7 +204,7 @@ mtry_final <- finalize(mtry(), incidents_train)
 # create tuning grid for stochasticity parameters
 tuning_grid <- grid_latin_hypercube(mtry_final,
                                     sample_size = sample_prop(),
-                                    size = 10)
+                                    size = 5)
 
 # create workflow for tuning stochasticity parameters
 xg_stoch_wf <- workflow() %>%
