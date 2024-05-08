@@ -23,7 +23,7 @@ incidents_df<-readr::read_csv(url(urlfile))
 
 
 ```{r}
-set.seed(123)
+set.seed(1234)
 
 # clean data
 incidents2class <- incidents_df %>%
@@ -119,45 +119,44 @@ The out-of-box model accurately predicts whether an incident was fatal about 94%
 3. Select the relevant hyperparameters for your algorithm and tune your model.
 
 ```{r cv_folds}
-set.seed(999)
+set.seed(1234)
 
 # create CV folds
 incidents_folds <- vfold_cv(incidents_train, v = 5)
 ```
 
 ```{r}
-# set.seed(999)
-# 
-# # select classification algorithm
-# xg_lr_spec <- boost_tree(mode = "classification",
-#                       engine = "xgboost",
-#                       trees = 1000,
-#                       learn_rate = tune())
-# 
-# # create tuning grid for learning rate
-# tuning_grid <- expand.grid(learn_rate = seq(0.01, 0.3, length.out = 10))
-# 
-# # create workflow for tuning learning rate
-# xg_lr_wf <- workflow() %>%
-#   add_model(xg_lr_spec) %>%
-#   add_recipe(recipe)
-# 
-# # tune learning rate using CV
-# xg_lr_tune <- tune_grid(xg_lr_wf,
-#                          resamples = incidents_folds,
-#                          grid = tuning_grid,
-#                          metrics = metric_set(accuracy))
-# 
-# # store optimized learning rate
-# best_lr <- select_best(xg_lr_tune)
+set.seed(1234)
+
+# select classification algorithm
+xg_lr_spec <- boost_tree(mode = "classification",
+                      engine = "xgboost",
+                      learn_rate = tune())
+
+# create tuning grid for learning rate
+tuning_grid <- expand.grid(learn_rate = seq(0.01, 0.3, length.out = 5))
+
+# create workflow for tuning learning rate
+xg_lr_wf <- workflow() %>%
+  add_model(xg_lr_spec) %>%
+  add_recipe(recipe)
+
+# tune learning rate using CV
+xg_lr_tune <- tune_grid(xg_lr_wf,
+                         resamples = incidents_folds,
+                         grid = tuning_grid,
+                         metrics = metric_set(accuracy))
+
+# store optimized learning rate
+best_lr <- select_best(xg_lr_tune)
 ```
 
 ```{r}
-set.seed(999)
+set.seed(1234)
 
 # specify model for tuning tree parameters
-xg_tree_spec <- boost_tree(learn_rate = tune(), # use optimized learning rate from previous step
-                            trees = 100, # tune number of trees
+xg_tree_spec <- boost_tree(learn_rate = best_lr$learn_rate, # use optimized learning rate from previous step
+                            trees = 3000, # set number of trees to 3000
                             tree_depth = tune(), # tune maximum tree depth
                             min_n = tune(), # tune minimum n for a terminal node (minimum number of data points in a node that is required for the node to be split further)
                             loss_reduction = tune(), # tune loss reduction (minimum loss required for further splits)
@@ -165,8 +164,7 @@ xg_tree_spec <- boost_tree(learn_rate = tune(), # use optimized learning rate fr
                             engine = "xgboost")
 
 # create tuning grid for tree parameters
-tuning_grid <- grid_latin_hypercube(learn_rate(),
-                                    tree_depth(),
+tuning_grid <- grid_latin_hypercube(tree_depth(),
                                     min_n(),
                                     loss_reduction(),
                                     size = 5)
@@ -190,8 +188,8 @@ best_tree <- select_best(xg_tree_tune)
 set.seed(1234)
 
 # specify model for tuning stochasticity parameters
-xg_stoch_spec <- boost_tree(learn_rate = best_tree$learn_rate, # use optimized learning rate
-                                  trees = 100, # set number of trees to 100
+xg_stoch_spec <- boost_tree(learn_rate = best_lr$learn_rate, # use optimized learning rate
+                                  trees = 3000, # set number of trees to 3000
                                   tree_depth = best_tree$tree_depth, # use optimized maximum tree depth
                                   min_n = best_tree$min_n, # use optimized minimum n for a terminal node (minimum number of data points in a node that is required for the node to be split further)
                                   loss_reduction = best_tree$loss_reduction, # use optimized loss reduction (minimum loss required for further splits)
@@ -220,7 +218,7 @@ xg_stoch_tune <- tune_grid(xg_stoch_wf,
                                  metrics = metric_set(accuracy))
 
 # store optimized stochasticity parameters
-best_stoch <- select_best(xg_stoch_tune)
+best_stoch <- select_best(xg_tune)
 ```
 
 
@@ -237,7 +235,7 @@ xg_predict2 <- predict(xg_fit, incidents_test) %>%
 
 # get probabilities for predictions made on testing data (to calculate ROC AUC)
 xg_predict2 <- predict(xg_fit, incidents_test, type = "prob") %>%
-  bind_cols(xg_predict2) %>%  # bind to df that was just created
+  bind_cols(xg_predict1) %>%  # bind to df that was just created
   mutate(name = as.factor(fatal))
 
 # store confusion matrix for predictions made on testing data
@@ -257,8 +255,7 @@ xg_specificity2 <- specificity(xg_predict2, truth = fatal, estimate = .pred_clas
 
 ```{r}
 # display confusion matrices of both models
-xg_conf_matrix1
-xg_conf_matrix2
+xg_conf_matrix1 + xg_conf_matrix2
 ```
 
 
@@ -267,7 +264,7 @@ xg_conf_matrix2
 metrics_tibble <- tibble(
   Method = factor(rep(c("xg1", "xg2"), times = 2),
                   levels = c("xg1", "xg2")),
-  Metric = rep(c("Accuracy", "Area under Receiver Operating Characteristic (ROC) curve"), each = 2),
+  Metric = rep(c("Accuracy", "Area under Receiver Operating Characteristic (ROC) curve"), each = 4),
   Value = c(xg_accuracy1$.estimate[1], xg_accuracy2$.estimate[1],
             xg_roc_auc1$.estimate[1], xg_roc_auc2$.estimate[1]))
 
@@ -288,7 +285,7 @@ ggplot(metrics_tibble, aes(x = Method, y = Value, fill = Metric)) +
         legend.title = element_blank())
 ```
 
-My second xgboost model ("xg2") performed significantly better than the out-of-box version ("xg1") for predicting the testing data, as tuning the learning rate, tree parameters, and stochastic parameter allows for the model to more effectively understand patterns in the training data. In this case, the improvement in accuracy was attributable to an increase in the true positive rate (i.e., accuracy when the accident was fatal), indicated by the sensitivity metric.
+My second xgboost model ("xg2") performed significantly better than the out-of-box version ("xg1") for predicting the testing data, as tuning the learning rate, tree parameters, and stochasiticity parameters allows for the model to more effectively understand patterns in the training data.
 
 5.
   a. Use variable importance to determine the terms most highly associated with non-fatal reports?  What about terms associated with fatal reports? OR
@@ -313,43 +310,3 @@ vip(xg_fit, method = "model", num_features = 13) +
 
 
 6. Predict fatality of the reports in the test set.  Compare this prediction performance to that of the Naive Bayes and Lasso models.  Why do you think your model performed as it did, relative to the other two?
-
-```{r sourcing, echo=FALSE}
-rmarkdown::render("Lab4_Demo.Rmd")
-rmarkdown::render("Lab4_Demo_2.Rmd")
-```
-
-
-```{r}
-# naive bayes
-nb_predictions <- nb_fit %>%
-  predict(new_data = incidents_test, type = "prob") %>%
-  bind_cols(incidents_test) %>%
-  mutate(.pred_class = factor(if_else(.pred_fatal > 0.5, "fatal", "non-fatal"), levels = levels(incidents_test$fatal)))
-
-# lasso
-lasso_predictions <- fitted_lasso %>%
-  predict(new_data = incidents_test, type = "prob") %>%
-  bind_cols(incidents_test) %>%
-  mutate(.pred_class = factor(if_else(.pred_fatal > 0.5, "fatal", "non-fatal"), levels = levels(incidents_test$fatal)))
-```
-
-```{r}
-# compare performance
-nb_metrics <- nb_predictions %>%
-  metrics(truth = fatal, estimate = .pred_class)
-
-lasso_metrics <- lasso_predictions %>%
-  metrics(truth = fatal, estimate = .pred_class)
-
-comparison_metrics_final <- bind_rows(
-  xgb_metrics_tuned %>% mutate(model = "XGBoost"),
-  nb_metrics %>% mutate(model = "Naive Bayes"),
-  lasso_metrics %>% mutate(model = "Lasso")
-)
-
-comparison_metrics_final
-```
-
-Compared to the Naive Bayes and Lasso models, the XGBoost model had a slightly higher accuracy. This was because of a higher true positive rate (i.e., accuracy when the accident was fatal), which is indicated by the sensitivity metric. I think that the reason why the the XGBoost model performed better was because of how this algorithm combines multiple weak learners and trains decision trees in iterations based on the residuals of the previous iteration. Through this iterative process, the model is better equipped to capture the relationships between each of the text features and the target.
-
